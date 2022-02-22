@@ -1,0 +1,939 @@
+---
+title: "Is this water safe to drink?"
+author: "Fib Gro"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output: 
+  rmdformats::downcute:
+    toc_depth: 4
+    toc_float: 
+        collapsed: True
+    highlight: tango
+    default_style: dark
+
+---
+
+# Introduction 
+
+```{r, echo=FALSE, fig.height=8}
+knitr::include_graphics("water.png")
+#https://www.onegreenplanet.org/lifestyle/portable-water-filters/
+```
+
+Drinking water or potable water comes from groundwater sources and is treated to meet quality standards for consumption. Groundwater itself is found below the ground surface or on the seabed. Water treatment aims to obtain clean water to meet quality and health requirements. It is a series of physical, chemical, and biological processes to treat microorganisms, bacteria, toxic chemicals and other impurities. The provision of drinking water has social, environmental and economic functions. Thus, every country must be able to ensure sustainable potable water demand. 
+
+# Objective 
+
+The project is part of the "learn by building"   of the classification method section. We will classify the water as potable or not by using logistic regression and the K-NN method. Model evaluation will be described based on appropriate metrics performance and the ROC. Then, model improvement will be explored and analyzed. 
+
+# Dataset Information 
+
+The dataset is collected from [the Kaggle website](https://www.kaggle.com/adityakadiwal/water-potability). The data contains 10 variables and 3,276 rows. The target variable is Potability. The possible predictors are pH, Hardness, Solids, Chloramines, Sulfate, Conductivity, Organic_carbon, Trihalomethanes and Turbidity. The following is the description of each variable: 
+
+1. ph: pH of 1. water (0 to 14).
+2. Hardness: Capacity of water to precipitate soap in mg/L.
+3. Solids: Total dissolved solids in ppm.
+4. Chloramines: Amount of Chloramines in ppm.
+5. Sulfate: Amount of Sulfates dissolved in mg/L.
+6. Conductivity: Electrical conductivity of water in μS/cm.
+7. Organic_carbon: Amount of organic carbon in ppm.
+8. Trihalomethanes: Amount of Trihalomethanes in μg/L.
+9. Turbidity: Measure of light-emitting property of water in NTU.
+10. Potability: Indicates if water is safe for human consumption. Potable - 1 and Not potable - 0
+
+Note :
+
+- ppm: parts per million
+- μg/L: microgram per litre
+- mg/L: milligram per litre
+
+# Data Preparation
+
+## Load Libraries
+
+The following are libraries used in this project. 
+
+```{r,warning=FALSE,message=FALSE}
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(caret)
+library(MASS)
+library(car)
+library(e1071)
+library(GGally)
+library(ROSE)
+library(class)
+library(caret) 
+library(wesanderson)
+library(plotly)
+library(glue)
+library(pROC)
+library(ROCR)
+```
+
+## Read Dataframe
+
+Read the dataset by using function `read.csv()` and assign it as a new object called `water`. 
+
+```{r}
+water <- read.csv("water_potability.csv")
+```
+
+## Observe Dataframe
+
+Observe the dataframe by using function `glimpse()`.
+
+- There are 3,276 rows and 10 columns. 
+- Type of data for all columns is numeric. 
+
+```{r}
+glimpse(water)
+```
+## Change Type of Data
+
+Let's change `Potability` into a factor and also change its level names. 
+
+```{r}
+water <- water %>% 
+  mutate(Potability=ifelse(Potability==0, "Not Potable", "Potable")) %>% 
+  mutate(Potability=as.factor(Potability))
+```
+
+## Check Missing Value
+
+Check missing value by using functions `colSums()` and `is.na()`. 
+
+```{r}
+miss <- as.data.frame(colSums(is.na(water)))
+```
+
+The table shows that there are missing values on `Sulfate`, `pH` and `Trihalomethanes`. Dropping the rows containing the missing value will not be our option, since it will reduce 40% of our data. Also, those columns are quite important for predicting Potability. Thus, the imputation method will be used to fill the missing value. 
+
+```{r, echo=FALSE}
+colnames(miss) <- c("Missing_Value")
+miss$Proportion <- round(miss$Missing_Value*100/3276,2)
+rmarkdown::paged_table(miss)
+```
+
+First, we observe the distribution of those three variables by using a histogram plot. Then, we can decide which imputation method we want to use. 
+
+```{r, echo=FALSE, warning=FALSE}
+# Transform the dataset into longer direction by using `pivot_longer()` and assign it as new dataframe called `water.miss`
+water.miss <- pivot_longer(data = water,
+                               cols = c(ph, Sulfate,Trihalomethanes))
+
+# Create a histogram from dataframe 'water.miss'.
+water.miss %>% 
+ggplot(aes(x = value, fill=name)) +
+  geom_histogram(color="black", bins = 10)+
+  facet_wrap(~name, scales = "free")+
+  theme_bw()+
+  scale_fill_manual(values = wes_palette(3, name = "Darjeeling1", type = "continuous"))+
+  labs(title="Distribution For ph, Sulfate,Trihalomethanes",
+       y="",
+       x="Values")+
+      
+      theme_set(theme_minimal() + theme(text = element_text(family="Arial Narrow"))) +
+      theme(plot.title = element_text(size= 17, color = 'black'),
+            axis.title.x = element_text(size=12, color = 'black'),
+            axis.title.y = element_text(size = 12, color = 'black'),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.line = element_line(colour = "black"),
+            legend.position = "")+
+    theme(strip.background =element_rect(fill="black"))+
+    theme(strip.text = element_text(colour = 'white', size=13))
+```
+
+The `ph` and `Trihalomethanes` has a normal distribution, thus we will use a mean value to fill the missing values. While, `Sulfate` has a slight left skew distribution, so we will use a median value to fill the missing value. 
+
+To fill the missing value, we use functions  `mutate()` and `replace_na`. 
+
+```{r}
+water <- water %>% 
+  mutate(ph = replace_na(ph, mean(ph, na.rm = T))) %>% 
+  mutate(Sulfate = replace_na(Sulfate, median(Sulfate, na.rm = T))) %>% 
+  mutate(Trihalomethanes= replace_na(Trihalomethanes, mean(Trihalomethanes, na.rm = T)))
+```
+
+## Correlation 
+
+The correlation between each variable can be observed by using `ggcorr()`. 
+
+```{r warning=FALSE}
+ggcorr(water, 
+       label = T, 
+       size = 3, hjust = 0.1, color='black', angle=90,
+       layout.exp = 3,
+       cex = 3)+
+labs(title = 'Correlation Matrix Predictors')+
+theme(plot.title = element_text(size=20),
+      legend.text = element_text(size = 12))
+```
+
+> Insight: There is almost no correlation between each predictor in this dataset. There is a good indication that there are no multicolinearity in variable predictors. 
+
+## Distribution And Outlier 
+
+We would like to know the distribution and also the outlier for each variable. Thus, we construct a boxplot and observe a summary of dataframe `water`. 
+
+```{r}
+summary(water,digit=0)
+```
+
+```{r, echo=FALSE}
+# Transform the dataset into longer direction by using `pivot_longer()` and assign it as new dataframe called `water.long`
+water.long <- pivot_longer(data = water,
+                               cols = c(ph, Hardness, Solids, Chloramines, Sulfate, Conductivity, Organic_carbon, Trihalomethanes,  Turbidity))
+
+# Create a boxplot from dataframe 'water.long'.
+  water.long %>% 
+ggplot(aes(x = value, fill=name)) +
+  geom_boxplot(color="black")+
+  facet_wrap(~name, scales = "free")+
+  theme_bw()+
+  scale_fill_manual(values = wes_palette(21, name = "Darjeeling1", type = "continuous"))+
+  labs(title="Boxplot For Predictors",
+       y="",
+       x="Values")+
+      
+      theme_set(theme_minimal() + theme(text = element_text(family="Arial Narrow"))) +
+      theme(plot.title = element_text(size= 17, color = 'black'),
+            axis.title.x = element_text(size=12, color = 'black'),
+            axis.title.y = element_text(size = 12, color = 'black'),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.line = element_line(colour = "black"),
+            legend.position = "")+
+    theme(strip.background =element_rect(fill="black"))+
+    theme(strip.text = element_text(colour = 'white'))
+```
+
+> Insight: We are dealing with an outlier in most variables. However, the distribution for each variable tends to have a small skewness. Thus, we can keep the outlier. 
+
+# Cross Validation 
+
+## Split Train-Test Data
+
+We split the dataset into train and test by using function `sample()`. The train dataset will contain 80% of the `water` dataframe. Train data is used to train the model, while the rest is used to test the model. 
+
+```{r}
+# Lock random samples 
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+# Create train dataset with 80% of total row in dataframe and the rest is used to test the model. 
+index_water <- sample(x=nrow(water), nrow(water)*0.8)
+
+# Create water_train as our train data
+water_train <- water[index_water,]
+
+# Create water_test as our test data
+water_test <- water[-index_water,]
+```
+
+## Proportion Class Target
+
+Let's check the class proportion of `Potability` in the train dataset. The class proportion of the variable target is 1,5: 1, which is considered slightly imbalanced. For our original model, we will use this train dataset. Later, in the model improvement section, we will handle the imbalanced target variables.
+
+```{r, echo=FALSE}
+# Create a table of class proportion target variable. 
+Proportion_Class <- round(table(water_train$Potability),0)
+Proportion_In_Percentage <- round(prop.table(table(water_train$Potability)),2)
+
+class2<-as.data.frame(rbind(Proportion_Class,Proportion_In_Percentage))
+rmarkdown::paged_table(class2)
+```
+
+# Logistic Regression 
+
+## Introduction
+
+Based on [Wikipedia](https://en.wikipedia.org/wiki/Logistic_regression), logistic regression is a classification algorithm that in its basic form utilized a logistic function to model binary or multiple target variables. Logistic regression aims to predict probability by using a linear regression model. The following is the equation of a logistic regression model : 
+
+$$
+log(\frac{p(X)}{1-p(X)}) = \beta_0 + \beta_1(X)
+$$
+
+Where : 
+
+- $\beta_0$ is the intercept of the model
+- $\beta_1$ is the coefficient of the variable predictor $X$
+- $log(\frac{p(X)}{1-p(X)})$ is the log of odds ratio.
+
+## Modelling 
+
+### Logistic Regression
+
+Let's create a logistic regression model by using function `glm()` from `water_train` dataframe with all numeric variables as a predictor and then, assign the model as `model_log`. 
+
+```{r}
+# Create a logistic regression model 
+model_log <- glm(Potability~., data= water_train, family="binomial")
+
+# Observe the summary of the model
+summary(model_log)
+```
+>Insight: If we observe the Pr(>|z|) or p-value for the model, only variable Solids has a significant contribution to our target variable. Therefore, we can try to fit a second model by using the stepwise backward method. 
+
+### Stepwise Method
+
+Stepwise is the step-by-step iterative construction of a regression model that involves the selection of variables predictor to be used in a final model. Backward method involves removing potential variables predictor in succession and testing for statistical significance after each iteration until the lowest AIC is achieved. 
+
+```{r}
+# Create a logistic regression model with stepwise method and assign as `model_log_backward`
+model_log_backward <- stepAIC(model_log, direction="backward", trace=0)
+
+# Observe summary of the model
+summary(model_log_backward)
+```
+
+>Insight: 
+>
+- The output above displays that three predictors in the model, which are Solids, Chloramines and Organis_carbon, have a significant contribution to the target variable. It is confirmed by a small p-value. 
+- The AIC value in the backward model (3495.1) is slightly lower than the logistic regression model (3504.6) with `glm()`. However, these values should not be considered to evaluate the model for classification type. Later, we will discuss related to confusion matrix and performance metrics to decide the best model. 
+
+
+## Model Interpretation 
+
+We will continue our analysis with the second model (model_log_backward) as it is easier to do our interpretation on the simpler model. Model logistic regression with stepwise method (model_log_backward): 
+
+**Potability = - 0.6788 + 0.00001 * Solids + 0.0427 * Chloramines - 0.0203 * Origanic_carbon**
+
+For interpretation, we need to change the coefficient in the model into odds by using functions `exp()` and `coef()`.
+
+```{r}
+exp(coef(model_log_backward))
+```
+>Interpretation : 
+>
+- Based on the positive or negative sign in each coefficient of the model, we are seeing that the odds of water becoming potable increase with the presence of Solids and Chloramines, and decrease with Organic_carbon.
+- One unit increases in Solids, the odds of water becoming potable increases one time. 
+- One unit increases in Chloramines, the odds of water becoming potable increases 1.043 times. 
+- One unit increases in Organic_carbon, the odds of water becoming potable reduces 0.979 times. 
+
+## Assumptions
+
+There are three assumptions in logistic regression. 
+
+- Independence of Observations: The observation for each predictor is unique and has no duplication. 
+- Linearity of Predictor & Log of Odds: the predictors are linearly related to the log odds. 
+- Multicolinearity : Based on the correlation matrix (plot) and VIF value of each predictor, which is less than 10, it can be concluded that there is no multicolinearity among the predictors. 
+
+```{r}
+vif(model_log_backward)
+```
+> Insight: The backward model (model_log_backward) does not violate the logistic regression assumptions.
+
+## Prediction 
+
+In this section, we will make a prediction based on the model backward by using the function `predict()`. We use `type = response` so that the prediction values will automatically be converted into probability. Then, we categorize the probability into target class with a threshold of 0.5. It implies that a probability value higher than 0.5 will be classified as `Potable`, otherwise as `Not Potable`. 
+
+```{r}
+# Create prediction to test dataset based on the `model_log_backward` 
+water_pred <- predict(object=model_log_backward, newdata=water_test, type="response")
+
+# Classify a probability value into target classes.
+water_pred_label <- as.factor(ifelse(water_pred >0.5, "Potable", "Not Potable"))
+```
+
+## Model Evaluation 
+
+The confusion matrix is used to describe the performance of a classification algorithm. Four metrics to evaluate classifiers are Accuracy, Sensitivity, Specificity and Precision. 
+
+- Accuracy is defined as the ratio of correctly predicted cases by the total cases. 
+
+$$
+Accuracy = \frac{TP+TN}{TP + TN +FP+FN}
+$$
+
+- Precision or Pos Pred Value describes how many of the correctly predicted cases turned out to be positive. This metric determines whether our model is reliable or not. 
+
+$$
+Precision = \frac{TP}{TP + FP}
+$$
+
+- Recall or Sensitivity describes how many of the actual positive cases we were able to predict correctly with our model.
+
+$$
+Recall = \frac{TP}{TP + FN}
+$$
+
+- Specificity describes how many of the actual negative cases we are able to predict correctly with our model.  
+
+$$
+Specificity = \frac{TN}{TN + FP}
+$$
+
+>Insight:
+>In this project, the expected model is a model that can predict water that meets the standards of potable water, so it is safe for consumption. The appropriate metric to be used is `precision`, where the model is reliable to classify potable water based on several given predictors. It is crucial that the model can correctly predict the positive class `Potable`. Once the model falsely predicts, then this leads to other health problems, such as stomach pain, allergies or diarrhoea if someone drinks water that is not safe for drinking. The bottom line, we want a model that can minimize False Positive prediction.
+
+Let's check the summary of the confusion matrix for `model_log_backward` by using function `confusionMatrix()`. We define `Potable` as positive class. 
+
+```{r warning=FALSE}
+# Create a confusion matrix and assign it as `con_backward`
+con_backward<- confusionMatrix(data=water_pred_label, reference =water_test$Potability, positive="Potable")
+
+# Observe the result of confusion matrix
+con_backward
+```
+
+>Insight:
+>
+- Accuracy of the model is 0.596, meaning that 59.6% of the test data are correctly predicted. However, the corrected cases only come from the `Not Potable` (Negative) class. It seems that the model fails to predict the `Potable` class. One of the reasons is the imbalanced class proportion in the target variable, which tends to dominate the training model in the majority class.
+- Since the model could not predict a positive class, the precision value can not be justified. 
+
+# K-NN Method
+
+Based on [Wikipedia](https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm), K-NN classify a new object by a plurality vote of its neighbours, with the object classified to the most common class among its "k" nearest neighbours. The outcome is a class membership. In this section, the prediction of  `Potability` will use the K-NN method. This method works well with numeric predictors. 
+
+## Data Preparation 
+
+Based on the summary of dataframe `water`, the range value of each predictor is different, therefore scaling in predictors is required. This needs to be done to prevent a domination effect of one variable. Since the minimal and maximal ranges in predictor are unpredictable, we will use the z-score standardization.  
+
+First, we will define the predictor and target for the train and test dataset. 
+
+```{r}
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+# Predictors data train (only numeric)
+train_x <- water_train %>% select_if(is.numeric) 
+
+# target data train 
+train_y <- water_train %>% dplyr::select(Potability) 
+
+# predictors data test (only numeric)
+test_x <- water_test %>% select_if(is.numeric)
+
+# target data test
+test_y <- water_test %>% dplyr::select(Potability) 
+```
+
+## Z-score Transformation
+
+Scaling train and test data by using function `scale()`
+
+```{r}
+# Z-score scaling to train data
+train_x_scaled <- scale(train_x)
+
+# Z-score scaling to test data
+test_x_scaled <- scale(test_x,
+                  center = attr(train_x_scaled,"scaled:center"), 
+                  scale = attr(train_x_scaled, "scaled:scale")) 
+```
+
+The optimum k-value can be obtained by using `sqrt()` of the number of rows in train data. 
+
+```{r}
+sqrt(nrow(train_x_scaled)) 
+```
+
+## Modelling
+
+Create K-NN model by using function `knn()` with k number is 51. Assign the model as `model_water_knn`.
+
+```{r}
+model_water_knn <- knn(train=train_x_scaled, 
+                test=test_x_scaled,
+                cl=train_y$Potability,
+                k =51)
+
+```
+
+## Model Evaluation
+
+Similar with a logistic regression, model evaluation utilizes confusion matrix. 
+
+```{r}
+# Create a confusion matrix and assign it as `con_knn`
+con_knn <- confusionMatrix(data=model_water_knn,reference =test_y$Potability, positive ="Potable")
+
+# Observe the result of confusion matrix
+con_knn
+```
+
+> Insights:
+>
+- The summary of the confusion matrix shows that the model using the K-NN method has an accuracy value of 0.654. It implies that the model can predict 65.4% of the test data correctly.
+- The precision value shows 0.8167, implying that 81.67% of the correctly predicted cases turned out to be positive
+- The recall and specificity values are 18.49% and 97.19%, respectively. It implies that most negative classes are correctly classified, as opposed to the positive class.
+
+# Comparison 
+
+## ROC (Receiver Operator Characteristic)
+
+[The empirical ROC curve](https://ncss-wpengine.netdna-ssl.com/wp-content/themes/ncss/pdf/Procedures/NCSS/Comparing_Two_ROC_Curves-Paired_Design.pdf) is a probability curve showing the true positive rate (sensitivity) versus the false positive rate (1 - specificity) for all possible cut-off values. While the AUC (Area Under Curve) measures how much the model is capable to distinguish between classes. The higher the AUC value, the better the model is at distinguishing positive and negative classes.  
+
+Now, we compare ROC and AUC for models with logistic regression and K-NN by using function `plot.roc` 
+
+```{r, message=FALSE}
+# Create K-NN model with the result in probability. 
+model_water_knn_op <- knn(train=train_x_scaled, test=test_x_scaled,cl=train_y$Potability,k =51, prob=TRUE)
+
+# Format the x-axis 
+par(pty="s")
+
+# ROC plot for logistic regression 
+plot.roc(water_test$Potability, water_pred, col="#FF9F45", main = "ROC curves", add =  FALSE,  print.auc = TRUE, legacy.axes=TRUE, print.auc.y = 0.5, print.auc.x = 0.3, xlab="False Positive Percentage", ylab="True Positive Percentage", lwd=2)
+
+# ROC plot for K-NN method
+plot.roc(test_y$Potability, attributes(model_water_knn_op)$prob, add=TRUE, legacy.axes=TRUE, print.auc = TRUE, print.auc.y = 0.6, print.auc.x = 0.3, col="#676FA3",lwd=2)
+
+# Create a legend
+legend("bottomright", c("K-NN","Logistic Regression"), lty=1:2, cex=0.85, col=c("#676FA3", "#FF9F45"), lwd=4)
+```
+
+[The curve interpretation](https://www.analyticsvidhya.com/blog/2020/06/auc-roc-curve-machine-learning/#:~:text=The%20Area%20Under%20the%20Curve,the%20positive%20and%20negative%20classes): 
+
+- At the lowest point (0,0), the model classifies all water as not potable (sensitivity =0, and the specificity =1). 
+- At the highest point (1,1), the model classifies all water as potable (sensitivity =1, and the specificity =0). 
+- The grey line (AUC = 0.5), means that the model could not distinguish classes, so the classifier is either predicting random classes or constant classes for all the data points.
+- The AUC of both models is between 0.5 and 1, implying that there is a high probability that the model will be able to distinguish the positive class from the negative class. This is because the classifier can detect more values of true positives and negatives than false negatives and positives. 
+- It is evident from the curve that the AUC for the KNN model is higher than that for the logistic regression. Therefore, the KNN model did a better job of classifying the target class in the dataset.
+
+## Performance Metrics Value
+
+The below table describes a comparison between a model with logistic regression and the K-NN method based on their metrics values. 
+
+```{r, echo=FALSE}
+# Model K-NN
+m <- as.data.frame(con_knn$overall[1])
+colnames(m) <- c("Model K-NN")
+n<- as.data.frame(con_knn$byClass[1:3])
+colnames(n) <- c("Model K-NN")
+mn<-round(rbind(m,n),4)
+
+# Model Logistic Regression 
+o <- as.data.frame(con_backward$overall[1])
+colnames(o) <- c("Model Logistic Regression")
+p<- as.data.frame(con_backward$byClass[1:3])
+colnames(p) <- c("Model Logistic Regression")
+op<-round(rbind(o,p),4)
+
+class5 <- cbind(op,mn)
+rmarkdown::paged_table(class5)
+
+```
+
+> Insights:
+>
+- The accuracy of the model using the K-NN method is higher (59.6%) than the model using logistic regression (65.4%). However, due to the imbalanced target class, the AUC is the appropriate value to compare both models. 
+- The K-NN model produces higher AUC values, implying that the model is better at distinguishing target classes.
+- Logistic regression failed to predict positive class, in contrast to the model with the K-NN method.
+- The precision value in the KNN method can be interpreted compared to the logistic regression model. 
+- In conclusion, for this dataset, the K-NN method produces a relatively better model than the logistic regression method.
+
+# Model Improvement
+
+There are several ways to improve the model. 
+
+1. Balance our class proportion in the target variable to prevent biased accuracy values. 
+2. Adjust the k-value in the K-NN method to achieve higher accuracy and precision value. 
+3. Adjust the probability threshold in logistic regression to prevent biased accuracy values. 
+
+## Balance Target Class
+
+In this section, we will balance the proportion class in the target variable of the train dataset (water_train). It is crucial to have a balanced class proportion so that the model can predict well in both classes. There are four methods for balancing class proportions:
+
+- Oversampling: The method increases the number of observations from the minority class to balance the classes
+- Under-sampling: The method reduces the number of observations from the majority class to balance the classes.
+- Both sampling: The method is a combination of over and under-sampling. 
+- [Synthetic data generation](https://www.analyticsvidhya.com/blog/2016/03/practical-guide-deal-imbalanced-classification-problems/): This method overcomes imbalances by generating artificial data. Basically, it generates a random set of minority class data to shift the classifier learning bias towards minority class.
+
+
+### Logistic Regression
+
+We need library `ROSE` with function `ovun.sample()` to generate a balanced class proportion in `Potability`. Since level `Not Potable` has more samples than level `Potable`, thus `Not Potable` will be classified as the majority class.
+
+```{r}
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+# row_0 is the number of row of `Not Potable` and row_1 is the number of row `Potable`
+row_0 <- nrow(water_train[water_train$Potability=="Not Potable",])
+row_1 <- nrow(water_train[water_train$Potability=="Potable",])
+
+# Over-sampling : N refers to number of data in the resulting balanced set. In this case, originally we had 1,607	negative class. The code instructs to over sample minority class (Potable) until it reaches 1,607. The total data set is 1,607*2 = 3,214 of samples.
+water_train_over <- ovun.sample(formula =Potability~., data = water_train, method = "over", N = (row_0*2), seed=100)$data
+
+# Under-sampling: Originally we had 1,013	positive class. The code instructs to under sample majority class (Not Potable) until it reduces to 1,013. The total data set is 1,013*2 = 2,026 of samples.
+water_train_under <- ovun.sample(formula =Potability~.,data = water_train, method = "under", N = (row_1*2), seed=100)$data
+
+# Both-sampling: The code instructs to under sample majority class (Not Potable) and to over sample minority class until its balanced. The total data set is 1,013+1,607 = 2,620 of samples.
+water_train_both <- ovun.sample(formula =Potability~., data = water_train, method = "both", N = (row_0+row_1), p=0.5, seed=100)$data
+
+# Synthetic Data: Data generated using synthetic methods by using `ROSE()`
+water_train_rose <- ROSE(formula =Potability~., data = water_train, seed=100)$data
+```
+
+As described in the below table, four balancing methods could generate a balanced proportion in the class target train dataset. Later, we will use each train dataset to train the logistic regression model. Then, we will evaluate the models based on their metrics value.
+
+```{r, echo=FALSE}
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+Imbalance <- c(round((table(water_train$Potability)),2), round(prop.table(table(water_train$Potability)),2))
+Over_Sampling <- c(round((table(water_train_over$Potability)),2), round(prop.table(table(water_train_over$Potability)),2))
+Under_Sampling <- c(round((table(water_train_under$Potability)),2), round(prop.table(table(water_train_under$Potability)),2))
+Both_Sampling <- c(round((table(water_train_both$Potability)),2), round(prop.table(table(water_train_both$Potability)),2))
+ROSE <- c(round((table(water_train_rose$Potability)),2), round(prop.table(table(water_train_rose$Potability)),2))
+
+class3 <- as.data.frame(rbind(Imbalance, Over_Sampling,Under_Sampling, Both_Sampling, ROSE))
+colnames(class3) <- c("Not Potable", "Potable", "Percentage Not Potable", "Percentage Potable")
+rmarkdown::paged_table(class3)
+```
+
+Create a model logistic regression for each train dataset by using the stepwise backward method.
+
+```{r}
+# Create model logistic regression using backward method with `water_train_over` dataset
+model_log_over <- glm(Potability ~ ., data = water_train_over, family="binomial")
+model_backward_over <- stepAIC(object=model_log_over, direction="backward", trace=0)
+
+# Create model logistic regression using backward method with `water_train_under` dataset
+model_log_under <- glm(Potability ~ ., data = water_train_under, family="binomial")
+model_backward_under <- stepAIC(object=model_log_under, direction="backward", trace=0)
+
+# Create model logistic regression using backward method with `water_train_both` dataset
+model_log_both <- glm(Potability ~ ., data = water_train_both, family="binomial")
+model_backward_both <- stepAIC(object=model_log_both, direction="backward", trace=0)
+
+# Create model logistic regression using backward method with `water_train_rose` dataset
+model_log_rose <- glm(Potability ~ ., data = water_train_rose, family="binomial")
+model_backward_rose <- stepAIC(object=model_log_rose, direction="backward", trace=0)
+
+```
+
+Create prediction and classification of the prediction. 
+
+```{r}
+# Over Sampling 
+water_pred_over <- predict(object=model_backward_over, newdata=water_test, type="response")
+water_pred_over_label <- as.factor(ifelse(water_pred_over >0.5, "Potable", "Not Potable"))
+con_over<-confusionMatrix(data=water_pred_over_label,reference =water_test$Potability, positive ="Potable")
+
+# Under Sampling 
+water_pred_under <- predict(object=model_backward_under, newdata=water_test, type="response")
+water_pred_under_label <- as.factor(ifelse(water_pred_under >0.5, "Potable", "Not Potable"))
+con_under<-confusionMatrix(data=water_pred_under_label,reference =water_test$Potability, positive ="Potable")
+
+# Both Sampling 
+water_pred_both <- predict(object=model_backward_both, newdata=water_test, type="response")
+water_pred_both_label <- as.factor(ifelse(water_pred_both >0.5, "Potable", "Not Potable"))
+con_both<-confusionMatrix(data=water_pred_both_label,reference =water_test$Potability, positive ="Potable")
+
+# Synthetic Data 
+water_pred_rose <- predict(object=model_backward_rose, newdata=water_test, type="response")
+water_pred_rose_label <- as.factor(ifelse(water_pred_rose >0.5, "Potable", "Not Potable"))
+con_rose<- confusionMatrix(data=water_pred_rose_label,reference =water_test$Potability, positive ="Potable")
+
+```
+
+Below table shows the summary of performance metrics of five models. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+# Over Sampling 
+a <- as.data.frame(con_over$overall[1])
+colnames(a) <- c("Model Over Sampling")
+b<- as.data.frame(con_over$byClass[1:3])
+colnames(b) <- c("Model Over Sampling")
+ab<-round(rbind(a,b),4)
+
+# Under Sampling 
+c <- as.data.frame(con_under$overall[1])
+colnames(c) <- c("Model Under Sampling")
+d<- as.data.frame(con_under$byClass[1:3])
+colnames(d) <- c("Model Under Sampling")
+cd<-round(rbind(c,d),4)
+
+# Under Sampling 
+e <- as.data.frame(con_both$overall[1])
+colnames(e) <- c("Model Both Sampling")
+f<- as.data.frame(con_both$byClass[1:3])
+colnames(f) <- c("Model Both Sampling")
+ef<-round(rbind(e,f),4)
+
+# Under Sampling 
+g <- as.data.frame(con_rose$overall[1])
+colnames(g) <- c("Model Synthetic")
+h<- as.data.frame(con_rose$byClass[1:3])
+colnames(h) <- c("Model Synthetic")
+gh<-round(rbind(g,h),4)
+
+# Model Imbalance 
+i <- as.data.frame(con_backward$overall[1])
+colnames(i) <- c("Model Imbalance")
+j<- as.data.frame(con_backward$byClass[1:3])
+colnames(j) <- c("Model Imbalance")
+ij<-round(rbind(i,j),4)
+
+# AUC
+a <- roc(water_test$Potability, water_pred)$auc[1] 
+b<- roc(water_test$Potability, water_pred_over)$auc[1] 
+c<- roc(water_test$Potability, water_pred_under)$auc[1] 
+d<- roc(water_test$Potability, water_pred_both)$auc[1] 
+e <- roc(water_test$Potability, water_pred_rose)$auc[1] 
+
+AUC <- cbind(a,b,c,d,e)
+colnames(AUC) <- c("Model Imbalance", "Model Over Sampling", "Model Under Sampling", "Model Both Sampling", "Model Synthetic")
+AUC <- as.data.frame(AUC)
+
+class4 <- cbind(ij,ab,cd,ef, gh)
+class5 <- rbind(class4, AUC)
+rownames(class5)[5] <- "Area Under Curve"
+rmarkdown::paged_table(class5)
+```
+
+>Insight: 
+>
+- The model logistic regression with an imbalanced class target has the highest value of accuracy. However, as mentioned above, this value is considered biased as the model fails to predict the positive class.  
+- Since four models with a balanced target class proportion produce metrics that are more reasonable and can be interpreted, those models are considered better than a model with an imbalanced class.
+- Since our target is precision value, a model with an over-sampling method is considered as the most appropriate model to classify Potability because the model has the highest precision and accuracy values compared to other sampling models.
+
+### K-NN method
+
+The train dataset uses the `water_train_over`.  First, we will define the predictor and target for train and test dataset. 
+
+```{r}
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+# predictors data train
+train_x_over <- water_train_over %>% select_if(is.numeric) 
+
+# target data train
+train_y_over <- water_train_over %>% dplyr::select(Potability) 
+
+# predictors data test
+test_x_over <- water_test %>% select_if(is.numeric)
+
+# target data test
+test_y_over <- water_test %>% dplyr::select(Potability) 
+```
+
+Scaling train and test dataset by using function `scale()`
+
+```{r}
+# Z-score scaling to train data
+train_x_scaled_over <- scale(train_x_over)
+
+# Z-score scaling to test data
+test_x_scaled_over <- scale(test_x_over,
+                  center = attr(train_x_scaled_over,"scaled:center"), 
+                  scale = attr(train_x_scaled_over, "scaled:scale")) 
+```
+
+Choose the optimum k value by using `sqrt()` of the number of samples of train dataset. 
+
+```{r}
+k_opt <- sqrt(nrow(train_x_scaled_over)) 
+```
+
+Create k-NN model by using function `knn()` with k number is 57. Assign the model as `model_water_knn`.
+
+```{r}
+# Create a K-NN  model
+model_water_knn_over <- knn(train=train_x_scaled_over, 
+                test=test_x_scaled_over,
+                cl=train_y_over$Potability,
+                k = 57)
+
+# Similar with logictic regression, model evaluation utilizes confusion matrix. 
+con_knn_over <- confusionMatrix(data=model_water_knn_over,
+                reference =test_y_over$Potability, 
+                positive ="Potable")
+```
+
+The below table shows the comparison between the K-NN model with the imbalanced and balanced class target. 
+
+```{r, echo=FALSE}
+# Under Sampling 
+y <- as.data.frame(con_knn$overall[1])
+colnames(y) <- c("Model K-NN Imbalance")
+z<- as.data.frame(con_knn$byClass[1:3])
+colnames(z) <- c("Model K-NN Imbalance")
+yz<-round(rbind(y,z),4)
+
+# Model Imbalance 
+q <- as.data.frame(con_knn_over$overall[1])
+colnames(q) <- c("Model Over K-NN")
+r<- as.data.frame(con_knn_over$byClass[1:3])
+colnames(r) <- c("Model Over K-NN")
+qr<-round(rbind(q,r),4)
+
+
+class6 <- cbind(yz,qr)
+rmarkdown::paged_table(class6)
+
+```
+> Insight: The accuracy level in the balanced model is slightly higher than a model with imbalanced. While the precision value in an imbalanced target is higher than a model with over-sampling. 
+
+## Adjusting k Value (K-NN method)
+
+To improve the model, we can adjust the k value to achieve the maximum precision value. In the below code, we create a loop to calculate the precision of the K-NN model for k values ranging from 1 to 70. This way we can observe which k value will result in the highest precision value. We will use the `model_water_knn_over` (balanced) to prevent biased accuracy value. 
+
+```{r}
+RNGkind(sample.kind = "Rejection")
+set.seed(100)
+
+i=1
+k.optm=1
+for (i in 1:70){
+model_water_knn_over <- knn(train=train_x_scaled_over, 
+                test=test_x_scaled_over,
+                cl=train_y_over$Potability,
+                k =i)
+k.optm[i] <- confusionMatrix(data=model_water_knn_over,
+                reference =test_y_over$Potability, 
+                positive ="Potable")$byClass[3]
+k=i
+cat(k,'=',k.optm[i],'')
+}
+```
+Below graph shows the precision value with different k-value in k-NN method. 
+
+```{r, warning=FALSE}
+# Creating a plot of the precision value versus k value from `k.optm`
+label <- as.data.frame(c(1:70))
+k.optimal <- as.data.frame(k.optm)
+k.optimal <- cbind(label,k.optm)
+colnames(k.optimal) <- c("k_value", "Precision")
+
+plot_k <-
+  k.optimal %>% 
+ggplot(aes(y=Precision, x=k_value))+
+  geom_line(color = "#676FA3", size = 0.4)+
+  geom_point(aes(text=glue("Precision : {round(Precision,4)}\nK-Value : {round(k_value,2)}")), color = "#FF9F45", size = 2)+
+  labs(x = "K-Value", y = "Precision Values",
+           title = "Interactive Plot: Precision Versus K-Value in K-NN Method")+
+  
+      theme_set(theme_minimal() + theme(text = element_text(family="Arial Narrow"))) +
+      theme(plot.title = element_text(size= 17, color = 'black', face ='bold'),
+            axis.title.x = element_text(size=14, color = 'black'),
+            axis.title.y = element_text(size = 14, color = 'black'),
+            axis.text.x = element_text(size = 12, color = 'black'),
+            axis.text.y = element_text(size = 12, color = 'black'),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.line = element_line(colour = "black"),
+            legend.position = "") 
+
+ggplotly(plot_k, tooltip = "text")
+```
+
+> Insight : Since our class target is even, we need the highest precision level with an odd k value. Thus, the K-NN model with k = 61 produces the highest precision value of 57.99%. This model slightly improves our precision value of the model with a k value of 57, which precision value accounted for 57.59%. 
+
+## Adjusting Threshold 
+
+An appropriate threshold (or cutoff) to be used in logistic regression is the point that maximizes the specificity and the sensitivity. The common way is to use [the Youden Index](https://rpubs.com/harshaash/logistic_regression). This method can be used to obtain the cutoff when specificity and sensitivity are equally important. 
+
+Let's try with the imbalanced model (model_log_backward). We can use functions `prediction()` and `performance()` to create the plot between sensitivity and specificity versus threshold. 
+
+```{r, warning=FALSE}
+# Create an object called `pred` from `water_pred` 
+pred <- prediction(predictions = water_pred, labels = water_test$Potability)
+
+# Use `performance()` to get sensitivity and specificity values
+perf_sn <- performance(prediction.obj = pred, measure = "sens")
+perf_sp <- performance(prediction.obj = pred, measure = "spec")
+
+# Create a dataframe of `thres` (combination between sensitivity and specificity values)
+sens_y <- as.data.frame(slot(perf_sn, "y.values"))
+colnames(sens_y)<-c("Sensitivity")
+sens_x <- as.data.frame(slot(perf_sn, "x.values"))
+colnames(sens_x) <- c("cut_off")
+spec_y <- as.data.frame(slot(perf_sp, "y.values"))
+colnames(spec_y)<-c("Specificity")
+thres <- cbind(sens_y, sens_x,spec_y)
+
+# Transform into longer direction and change the data type of `name` to factor 
+thres <- pivot_longer(thres, cols=c("Sensitivity","Specificity"))
+thres$name<- as.factor(thres$name)
+
+# Create an interactive plot with ggplotly()
+plot_t <- thres %>% 
+ggplot(aes(x=cut_off, y=value, label = value))+
+  geom_line(aes(color = name), size = 0.4)+
+  geom_point(aes(color=name, text=glue("{(name)} : {round(value,4)}\nCut-off : {round(cut_off,2)}")), size = 2)+
+  labs(x = "Cut-Off Threshold", y = "Sensitivity/Specificity Values",
+           title = "Interactive Plot : Sensitivity/Specificity Versus Threshold")+
+  
+      theme_set(theme_minimal() + theme(text = element_text(family="Arial Narrow"))) +
+      scale_color_manual(values = wes_palette(4, name = "FantasticFox1"))+
+      theme(plot.title = element_text(size= 17, color = 'black', face ='bold'),
+            axis.title.x = element_text(size=14, color = 'black'),
+            axis.title.y = element_text(size = 14, color = 'black'),
+            axis.text.x = element_text(size = 12, color = 'black'),
+            axis.text.y = element_text(size = 12, color = 'black'),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            axis.line = element_line(colour = "black"),
+            legend.position = "",
+            legend.text = element_text(size = 14, color = 'black'))
+
+ggplotly(plot_t, tooltip = "text")
+```
+
+From the above interactive plot, the intersection point at which there is a balance between sensitivity and specificity is at 0.39 cut-off (probability threshold). It implies that the `Potable` class is defined when the probability of prediction is more than 0.39, instead of 0.5 (default threshold). The plot also suggests that there is a trade-off between the sensitivity and specificity values. If the threshold is between 0.39 and 0.5, we would obtain a higher specificity and lower sensitivity, vice versa, with a threshold between 0.3 and 0.39.
+
+Now, we can observe detailed metrics from this model and compare the results with the model using the default threshold. 
+
+```{r}
+# Classify a probability value into target classes.
+water_pred_adj <- as.factor(ifelse(water_pred >0.39, "Potable", "Not Potable"))
+
+# Create confusion matrix 
+con_adj <- confusionMatrix(data=water_pred_adj,reference =water_test$Potability, positive ="Potable")
+```
+
+
+```{r, echo=FALSE}
+
+# Model t= 0.39 
+m <- as.data.frame(con_adj$overall[1])
+colnames(m) <- c("Model t = 0.39")
+n<- as.data.frame(con_adj$byClass[1:3])
+colnames(n) <- c("Model t = 0.39")
+mn<-round(rbind(m,n),4)
+
+# Model t =0.5
+o <- as.data.frame(con_backward$overall[1])
+colnames(o) <- c("Model t = 0.5")
+p<- as.data.frame(con_backward$byClass[1:3])
+colnames(p) <- c("Model t = 0.5")
+op<-round(rbind(o,p),4)
+
+class8 <- cbind(op,mn)
+rmarkdown::paged_table(class8)
+```
+> Insight: The model with a threshold of 0.39 does not obtain the highest accuracy value compared to a model with a threshold of 0.5 (default). However, this model would not be biased towards the positives or negatives class, which is confirmed by other metrics values (sensitivity, specificity and precision). The precision value of the model with a threshold of 0.39 is better than a model with a threshold of 0.5. 
+
+
+# Conclusion 
+
+- Based on the model with the stepwise backward method, Solids, Chloramines and Organic carbon have a significant contribution to potability. Also, this model produces a lower AIC value compared to logistic regression with glm().
+- Model with imbalanced target class produces biased accuracy value. This is valid for both models with the logistic regression method and K-NN method. Thus, AUC is a preferable value to compare the goodness of both models.
+- Model with the K-NN method performs better than a model with logistic regression to classify the potability of water in this dataset, confirmed by a higher number of the area under the ROC and precision value. 
+- In this study, the imbalanced target class has been handled by using four different types of sampling (over, under, both and synthetic). For this dataset, the over-sampling method in logistic regression performs better in terms of accuracy and precision values compared to other sampling methods. 
+- The optimum k value is obtained by using a precision plot to find the most favourable k value (k = 61). This is the point, where the precision indicates higher than the most frequently used k-value (square root of the total number of samples).
+- Adjusted threshold probabilities by using the Youden Index does not obtain the model with the highest accuracy. However, it can provide an unbiased accuracy metric.
+
+
+
+# References 
+
+1. [Imbalanced Class](https://www.analyticsvidhya.com/blog/2016/03/practical-guide-deal-imbalanced-classification-problems/)
+2. [K-NN Method](https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm)
+3. [Logistic Regression](https://en.wikipedia.org/wiki/Logistic_regression)
+4. [ROC And AUC](https://www.analyticsvidhya.com/blog/2020/06/auc-roc-curve-machine-learning/#:~:text=The%20Area%20Under%20the%20Curve,the%20positive%20and%20negative%20classes)
+5. [The Kaggle Website](https://www.kaggle.com/adityakadiwal/water-potability)
+6. [The Youden Index](https://rpubs.com/harshaash/logistic_regression)
+7. [The Youden Index](https://en.wikipedia.org/wiki/Youden%27s_J_statistic)
+
+
