@@ -1,6 +1,6 @@
 # Potable Water
 
-The project is part of the "learn by building" of the classification method section. We will classify the water as potable or not by using logistic regression and the K-NN method in R. Model evaluation will be described based on appropriate metrics performance and the ROC. Then, model improvement will be explored and analyzed. 
+We will classify the water as potable or not by using logistic regression and the K-NN method in R. Model evaluation will be described based on appropriate metrics performance and the ROC. Then, model improvement will be explored and analyzed. 
 
 # End Result of The Project
 
