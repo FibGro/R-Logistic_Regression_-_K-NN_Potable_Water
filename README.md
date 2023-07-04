@@ -26,3 +26,12 @@ The dataset is collected from [the Kaggle website](https://www.kaggle.com/aditya
 - Rmd files
 - Image file
 - Dataset (csv)
+
+# Conclusion  
+
+1. Based on the model with the stepwise backward method, Solids, Chloramines and Organic carbon have a significant contribution to portability. Also, this model produces a lower AIC value compared to logistic regression with glm().
+2. Model with an imbalanced target class produces a biased accuracy value. This is valid for both models with the logistic regression method and K-NN method. Thus, AUC is a preferable value to compare the goodness of both models.
+3. Model with the K-NN method performs better than a model with logistic regression to classify the potability of water in this dataset, confirmed by a higher number of the area under the ROC and precision value.
+4. In this study, the imbalanced target class has been handled by using four different types of sampling (over, under, both and synthetic). For this dataset, the over-sampling method in logistic regression performs better in terms of accuracy and precision values compared to other sampling methods.
+5. The optimum k value is obtained by using a precision plot to find the most favourable k value (k = 61). This is the point, where the precision indicates higher than the most frequently used k-value (square root of the total number of samples).
+6. Adjusted threshold probabilities by using the Youden Index do not obtain the model with the highest accuracy. However, it can provide an unbiased accuracy metric.
